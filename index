@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Old Car Matchmaker (MVP)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; line-height: 1.35; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 800px) { .row { grid-template-columns: 1fr 1fr; } }
+    label { display:block; font-weight: 600; margin-bottom: 6px; }
+    input, select { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #111; background: #111; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #111; }
+    .muted { color:#555; }
+    .pill { display:inline-block; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; margin-right: 6px; font-size: 12px; }
+    .links a { display:inline-block; margin-right: 10px; margin-top: 8px; }
+    .score { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+
+  <h1>Old Car Matchmaker (MVP)</h1>
+  <p class="muted">
+    Browser-only demo: asks a few questions, recommends older cars that are easier to keep running,
+    then links you out to private-party marketplaces.
+  </p>
+
+  <div class="card">
+    <h2>1) Quick quiz</h2>
+
+    <div class="row">
+      <div>
+        <label for="zip">ZIP code</label>
+        <input id="zip" inputmode="numeric" placeholder="e.g., 94110" maxlength="10" />
+      </div>
+
+      <div>
+        <label for="radius">Search radius (miles)</label>
+        <select id="radius">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="250">250</option>
+          <option value="500">500</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="budget">Max budget ($)</label>
+        <input id="budget" type="number" min="500" step="500" value="12000" />
+      </div>
+
+      <div>
+        <label for="use">Primary use</label>
+        <select id="use">
+          <option value="city">Mostly city</option>
+          <option value="mixed" selected>Mixed</option>
+          <option value="highway">Mostly highway</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="weather">Weather / terrain</label>
+        <select id="weather">
+          <option value="mild" selected>Mild / dry</option>
+          <option value="snow">Snow / ice</option>
+          <option value="hills">Hills / mountains</option>
+          <option value="hot">Very hot summers</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="cargo">Cargo needs</label>
+        <select id="cargo">
+          <option value="small" selected>Small (groceries)</option>
+          <option value="medium">Medium (stroller / gear)</option>
+          <option value="large">Large (lots of gear / tools)</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="diy">DIY / maintenance comfort</label>
+        <select id="diy">
+          <option value="low">Low (I just want it to work)</option>
+          <option value="med" selected>Medium (basic maintenance ok)</option>
+          <option value="high">High (I enjoy wrenching)</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="quirks">Tolerance for quirks</label>
+        <select id="quirks">
+          <option value="low" selected>Low (reliable only)</option>
+          <option value="med">Medium</option>
+          <option value="high">High (character is fine)</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="body">Preferred body style</label>
+        <select id="body">
+          <option value="any" selected>Any</option>
+          <option value="sedan">Sedan</option>
+          <option value="hatch">Hatch/Wagon</option>
+          <option value="suv">SUV</option>
+          <option value="truck">Truck</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="trans">Transmission</label>
+        <select id="trans">
+          <option value="any" selected>Any</option>
+          <option value="auto">Automatic</option>
+          <option value="manual">Manual</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button id="btnRun">Find my cars</button>
+      <button class="secondary" id="btnReset" type="button">Reset</button>
+    </div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>2) Results</h2>
+    <p class="muted" id="summary"></p>
+    <div id="results"></div>
+  </div>
+
+<script>
+/**
+ * Tiny “knowledge base” (MVP).
+ * Expand this over time with more models + year ranges + notes.
+ *
+ * Fields:
+ * - tags: attributes used for scoring
+ * - repairability: 1-5 (higher = easier/cheaper to keep running)
+ * - quirks: 1-5 (higher = more quirks)
+ * - cargo: 1-3 (small/med/large)
+ * - snowOK: boolean (good AWD/traction options or known snow competence)
+ */
+const CARS = [
+  {
+    id: "civic_06_11",
+    name: "Honda Civic (2006–2011)",
+    body: "sedan",
+    trans: ["auto", "manual"],
+    mpg: "high",
+    cargo: 1,
+    repairability: 4,
+    quirks: 2,
+    snowOK: false,
+    notes: ["Great parts availability", "Simple to service", "Cheap to run"],
+    searchTerms: ["Honda Civic", "2006..2011"]
+  },
+  {
+    id: "corolla_03_08",
+    name: "Toyota Corolla (2003–2008)",
+    body: "sedan",
+    trans: ["auto", "manual"],
+    mpg: "high",
+    cargo: 1,
+    repairability: 5,
+    quirks: 1,
+    snowOK: false,
+    notes: ["Very durable", "Easy ownership", "Wide mechanic familiarity"],
+    searchTerms: ["Toyota Corolla", "2003..2008"]
+  },
+  {
+    id: "camry_02_06",
+    name: "Toyota Camry (2002–2006)",
+    body: "sedan",
+    trans: ["auto", "manual"],
+    mpg: "med",
+    cargo: 2,
+    repairability: 4,
+    quirks: 2,
+    snowOK: false,
+    notes: ["Comfortable", "Plenty of parts", "Good highway car"],
+    searchTerms: ["Toyota Camry", "2002..2006"]
+  },
+  {
+    id: "crownvic_03_11",
+    name: "Ford Crown Victoria / Grand Marquis (2003–2011)",
+    body: "sedan",
+    trans: ["auto"],
+    mpg: "low",
+    cargo: 2,
+    repairability: 4,
+    quirks: 2,
+    snowOK: false,
+    notes: ["Extremely serviceable", "Fleet-proven", "Cheap parts"],
+    searchTerms: ["Crown Victoria Grand Marquis", "2003..2011"]
+  },
+  {
+    id: "crv_05_11",
+    name: "Honda CR-V (2005–2011)",
+    body: "suv",
+    trans: ["auto", "manual"],
+    mpg: "med",
+    cargo: 3,
+    repairability: 4,
+    quirks: 2,
+    snowOK: true,
+    notes: ["Great utility", "AWD available", "Strong resale"],
+    searchTerms: ["Honda CR-V", "2005..2011"]
+  },
+  {
+    id: "rav4_06_12",
+    name: "Toyota RAV4 (2006–2012)",
+    body: "suv",
+    trans: ["auto"],
+    mpg: "med",
+    cargo: 3,
+    repairability: 4,
+    quirks: 2,
+    snowOK: true,
+    notes: ["AWD options", "Long-lived", "Useful cargo space"],
+    searchTerms: ["Toyota RAV4", "2006..2012"]
+  },
+  {
+    id: "matrix_vibe_03_08",
+    name: "Toyota Matrix / Pontiac Vibe (2003–2008)",
+    body: "hatch",
+    trans: ["auto", "manual"],
+    mpg: "high",
+    cargo: 2,
+    repairability: 5,
+    quirks: 2,
+    snowOK: false,
+    notes: ["Practical hatch", "Toyota mechanicals", "Easy to keep running"],
+    searchTerms: ["Toyota Matrix Pontiac Vibe", "2003..2008"]
+  }
+];
+
+function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+function getFormValues() {
+  const zip = document.getElementById("zip").value.trim();
+  const radius = parseInt(document.getElementById("radius").value, 10);
+  const budget = parseInt(document.getElementById("budget").value, 10);
+  const use = document.getElementById("use").value;
+  const weather = document.getElementById("weather").value;
+  const cargo = document.getElementById("cargo").value; // small/medium/large
+  const diy = document.getElementById("diy").value;     // low/med/high
+  const quirks = document.getElementById("quirks").value; // low/med/high
+  const body = document.getElementById("body").value;   // any/sedan/hatch/suv/truck
+  const trans = document.getElementById("trans").value; // any/auto/manual
+
+  return { zip, radius, budget, use, weather, cargo, diy, quirks, body, trans };
+}
+
+function cargoToNum(c) {
+  if (c === "small") return 1;
+  if (c === "medium") return 2;
+  return 3;
+}
+
+function scoreCar(user, car) {
+  let score = 0;
+  const reasons = [];
+
+  // Hard-ish preferences
+  if (user.body !== "any" && car.body !== user.body) {
+    score -= 25;
+    reasons.push("Different body style than you selected");
+  } else if (user.body !== "any") {
+    score += 8;
+    reasons.push("Matches your body style");
+  }
+
+  if (user.trans !== "any" && !car.trans.includes(user.trans)) {
+    score -= 25;
+    reasons.push("Doesn't match your transmission preference");
+  } else if (user.trans !== "any") {
+    score += 6;
+    reasons.push("Matches your transmission preference");
+  }
+
+  // Cargo
+  const needCargo = cargoToNum(user.cargo);
+  const cargoDiff = car.cargo - needCargo;
+  score += clamp(cargoDiff * 6, -12, 12);
+  if (cargoDiff >= 0) reasons.push("Meets your cargo needs");
+  else reasons.push("Might be tight for your cargo needs");
+
+  // Weather
+  if (user.weather === "snow") {
+    if (car.snowOK) { score += 10; reasons.push("Better suited to snow/ice"); }
+    else { score -= 8; reasons.push("Less ideal for snow/ice"); }
+  }
+  if (user.weather === "hills") {
+    // simplistic: SUVs get a small bump
+    if (car.body === "suv") { score += 5; reasons.push("Good for hills/mountains"); }
+  }
+  if (user.weather === "hot") {
+    // nothing fancy; in real version you’d track AC reliability per model/year
+    score += 1;
+  }
+
+  // Use case
+  if (user.use === "highway") {
+    if (car.mpg === "high") { score += 6; reasons.push("Efficient for highway miles"); }
+    if (car.name.includes("Camry")) { score += 2; }
+  } else if (user.use === "city") {
+    if (car.mpg === "high") { score += 8; reasons.push("Efficient for city driving"); }
+    if (car.body === "suv") { score -= 2; }
+  } else { // mixed
+    score += (car.mpg === "high") ? 5 : 2;
+  }
+
+  // “Keep it on the road” logic
+  // Lower DIY means you want higher repairability and fewer quirks.
+  const diyWeight = (user.diy === "low") ? 8 : (user.diy === "med") ? 5 : 2;
+  score += car.repairability * diyWeight;
+  reasons.push("Good parts/repair outlook");
+
+  const quirkTolerance = (user.quirks === "low") ? 10 : (user.quirks === "med") ? 6 : 2;
+  score -= car.quirks * quirkTolerance;
+  if (user.quirks === "low") reasons.push("Penalized quirky models");
+
+  // Budget (super rough for MVP):
+  // In a real build you’d use actual market prices by year/trim/location.
+  // Here we assume some cars skew cheaper vs pricier using a tiny heuristic.
+  const priceHint = (car.body === "suv") ? 12000 : 9000;
+  if (user.budget < priceHint) { score -= 6; reasons.push("May be harder to find under your budget"); }
+  else { score += 3; reasons.push("Usually possible within budget"); }
+
+  return { score, reasons };
+}
+
+function buildOutboundLinks(user, car) {
+  const zip = user.zip || ""; // optional
+  const r = user.radius || 100;
+
+  // We'll generate conservative keyword searches.
+  const query = encodeURIComponent(car.searchTerms.join(" "));
+
+  // NOTE: These are outbound links; no scraping or republishing.
+  const links = [
+    { label: "Bring a Trailer (search)", href: `https://bringatrailer.com/search/?q=${query}` },
+    { label: "Cars & Bids (search)", href: `https://carsandbids.com/search?q=${query}` },
+    { label: "eBay Motors (search)", href: `https://www.ebay.com/sch/i.html?_nkw=${query}&_sacat=6001` },
+    // Craigslist varies by region; this is a generic search portal.
+    { label: "Craigslist (search)", href: `https://www.craigslist.org/search/cta?query=${query}` }
+  ];
+
+  // Optionally add a Google “near me” style query using zip/radius.
+  if (zip) {
+    links.push({
+      label: "Google (nearby listings)",
+      href: `https://www.google.com/search?q=${query}%20for%20sale%20near%20${encodeURIComponent(zip)}`
+    });
+  }
+
+  return links;
+}
+
+function renderResults(user, ranked) {
+  const resultsCard = document.getElementById("resultsCard");
+  const resultsDiv = document.getElementById("results");
+  const summary = document.getElementById("summary");
+
+  resultsDiv.innerHTML = "";
+  resultsCard.style.display = "block";
+
+  summary.textContent = `Showing top matches based on repairability + your needs. ZIP is used only for outbound search links.`;
+
+  ranked.slice(0, 4).forEach((item, idx) => {
+    const car = item.car;
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const title = document.createElement("h3");
+    title.textContent = `${idx + 1}. ${car.name}`;
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.innerHTML = `
+      <span class="pill">Body: ${car.body}</span>
+      <span class="pill">MPG: ${car.mpg}</span>
+      <span class="pill">Repairability: ${car.repairability}/5</span>
+      <span class="pill">Quirks: ${car.quirks}/5</span>
+      <span class="pill score">Score: ${Math.round(item.score)}</span>
+    `;
+    card.appendChild(meta);
+
+    const why = document.createElement("p");
+    why.className = "muted";
+    const topReasons = item.reasons.slice(0, 4);
+    why.textContent = "Why: " + topReasons.join(" • ");
+    card.appendChild(why);
+
+    const notes = document.createElement("ul");
+    car.notes.forEach(n => {
+      const li = document.createElement("li");
+      li.textContent = n;
+      notes.appendChild(li);
+    });
+    card.appendChild(notes);
+
+    const linksWrap = document.createElement("div");
+    linksWrap.className = "links";
+    const links = buildOutboundLinks(user, car);
+    links.forEach(l => {
+      const a = document.createElement("a");
+      a.href = l.href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = l.label;
+      linksWrap.appendChild(a);
+    });
+    card.appendChild(linksWrap);
+
+    resultsDiv.appendChild(card);
+  });
+}
+
+document.getElementById("btnRun").addEventListener("click", () => {
+  const user = getFormValues();
+
+  // Basic validation (ZIP optional)
+  if (!user.budget || user.budget < 500) {
+    alert("Please enter a realistic budget.");
+    return;
+  }
+
+  const ranked = CARS
+    .map(car => {
+      const { score, reasons } = scoreCar(user, car);
+      return { car, score, reasons };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  renderResults(user, ranked);
+  window.scrollTo({ top: document.getElementById("resultsCard").offsetTop, behavior: "smooth" });
+});
+
+document.getElementById("btnReset").addEventListener("click", () => {
+  document.querySelectorAll("input, select").forEach(el => {
+    if (el.id === "budget") el.value = 12000;
+    else if (el.id === "radius") el.value = "100";
+    else if (el.tagName === "INPUT") el.value = "";
+    else if (el.tagName === "SELECT") el.selectedIndex = 0;
+  });
+  document.getElementById("resultsCard").style.display = "none";
+});
+</script>
+
+</body>
+</html>
